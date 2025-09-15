@@ -1,0 +1,53 @@
+image: gitpod/workspace-full
+
+tasks:
+  - name: Prepare dev environment
+    init: |
+      # 1) Use Node 14.x (use nvm)
+      curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.6/install.sh | bash
+      export NVM_DIR="$HOME/.nvm"
+      [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+      nvm install 14.21.3
+      nvm use 14.21.3
+
+      # 2) Install Meteor
+      curl https://install.meteor.com/ | sh
+
+      # 3) Install Deno required by apps-engine
+      curl -fsSL https://deno.land/x/install/install.sh | sh
+      export DENO_INSTALL="$HOME/.deno"
+      export PATH="$DENO_INSTALL/bin:$PATH"
+
+      # 4) Install yarn (if not present)
+      npm i -g yarn
+
+      # 5) Install dependencies (yarn is used by repo)
+      yarn install --frozen-lockfile
+
+      # 6) Ensure docker is available; pull Mongo image
+      docker pull mongo:5.0 || true
+
+    command: |
+      # 7) Start Mongo with replica set (background)
+      docker run --name gitpod-mongo -d -p 27017:27017 mongo:5.0 --replSet rs0 --oplogSize 128 || true
+      # wait for mongo
+      for i in `seq 1 20`; do
+        docker exec gitpod-mongo mongosh --eval "db.adminCommand('ping')" && break
+        sleep 1
+      done
+      # 8) Initiate replica set (if not initiated)
+      docker exec gitpod-mongo mongosh --eval "rs.status()" || docker exec gitpod-mongo mongosh --eval "rs.initiate()"
+
+      # 9) Export environment used by Rocket.Chat
+      export MONGO_URL="mongodb://localhost:27017/rocketchat?replicaSet=rs0"
+      export ROOT_URL="https://$(gp url 3000)"
+      export PORT=3000
+      export METEOR_PROFILE=1
+
+      # 10) Start Rocket.Chat in dev mode (uses Meteor)
+      # Use `yarn dev` if the repo's scripts use that; otherwise `npm start` / `yarn start`.
+      # Here we prefer yarn dev (adjust if upstream changed scripts)
+      yarn dev
+ports:
+  - port: 3000
+    onOpen: open-preview
